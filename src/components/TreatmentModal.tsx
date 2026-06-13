@@ -1,10 +1,10 @@
 import { useMemo, useState, useEffect } from "react";
-import { X, Stethoscope, Pill, Users, ArrowRight, Sparkles, AlertCircle } from "lucide-react";
-import { useGameStore } from "@/store/gameStore";
+import { X, Stethoscope, Pill, Users, ArrowRight, AlertCircle, Sparkles, Brain, ChevronDown } from "lucide-react";
+import { useGameStore, guessDiseaseFromSymptoms } from "@/store/gameStore";
 import {
   BREEDS, HERBS, PRESCRIPTIONS,
   SEVERITY_NAMES, SEVERITY_COLORS, DISEASE_NAMES,
-  DISEASE_SYMPTOMS, ELEMENT_EMOJI, ELEMENT_NAMES,
+  ELEMENT_EMOJI, ELEMENT_NAMES,
 } from "@/data/gameData";
 import type { Bed, DiseaseType } from "@/types/game";
 
@@ -16,17 +16,10 @@ interface TreatmentModalProps {
 
 const SEVERITY_ORDER = ["mild", "moderate", "severe", "critical"];
 
-function guessDiseaseFromSymptoms(symptoms: string[]): { disease: DiseaseType; match: number }[] {
-  const results: { disease: DiseaseType; match: number }[] = [];
-  for (const d of Object.keys(DISEASE_SYMPTOMS) as DiseaseType[]) {
-    const all = DISEASE_SYMPTOMS[d];
-    let matchCount = 0;
-    for (const s of symptoms) {
-      if (all.includes(s)) matchCount++;
-    }
-    results.push({ disease: d, match: matchCount / all.length });
-  }
-  return results.sort((a, b) => b.match - a.match).slice(0, 3);
+function getMatchLabel(rate: number): { text: string; color: string } {
+  if (rate >= 80) return { text: "高度疑似", color: "text-emerald-600 bg-emerald-50 border-emerald-200" };
+  if (rate >= 50) return { text: "中度疑似", color: "text-amber-600 bg-amber-50 border-amber-200" };
+  return { text: "不排除", color: "text-gray-500 bg-gray-50 border-gray-200" };
 }
 
 export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps) {
@@ -38,18 +31,31 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
 
   const [selectedHerbs, setSelectedHerbs] = useState<string[]>([]);
   const [selectedStaff, setSelectedStaff] = useState<string | null>(null);
-  const [showHint, setShowHint] = useState(true);
+  const [playerDiagnosis, setPlayerDiagnosis] = useState<DiseaseType | null>(null);
+  const [showAllDiseases, setShowAllDiseases] = useState(false);
 
   const beast = useMemo(() => queue.find(b => b.id === selectedBeastId), [queue, selectedBeastId]);
   const breed = beast ? BREEDS.find(b => b.id === beast.breedId) : null;
-  const guesses = useMemo(() => beast ? guessDiseaseFromSymptoms(beast.symptoms) : [], [beast]);
   const idleStaff = useMemo(() => staff.filter(s => s.status === "idle"), [staff]);
+
+  const suspectedDiseases = useMemo(() => {
+    if (!beast) return [];
+    return guessDiseaseFromSymptoms(beast.symptoms);
+  }, [beast]);
+
+  const topSuspects = useMemo(() => showAllDiseases ? suspectedDiseases : suspectedDiseases.slice(0, 3), [suspectedDiseases, showAllDiseases]);
+
+  const recommendedPrescription = useMemo(() => {
+    if (!playerDiagnosis) return null;
+    return PRESCRIPTIONS.find(p => p.disease === playerDiagnosis) || null;
+  }, [playerDiagnosis]);
 
   useEffect(() => {
     if (open) {
       setSelectedHerbs([]);
       setSelectedStaff(null);
-      setShowHint(true);
+      setPlayerDiagnosis(null);
+      setShowAllDiseases(false);
     }
   }, [open, selectedBeastId]);
 
@@ -64,10 +70,14 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
     });
   };
 
-  const usePrescription = (presc: typeof PRESCRIPTIONS[number]) => {
-    const enough = presc.herbIds.every(id => (inventory[id] ?? 0) >= 1);
-    if (!enough) return;
+  const applyPrescription = (presc: { herbIds: string[] }) => {
+    const canAfford = presc.herbIds.every(id => (inventory[id] ?? 0) >= 1);
+    if (!canAfford) return;
     setSelectedHerbs([...presc.herbIds]);
+  };
+
+  const selectDiagnosis = (disease: DiseaseType) => {
+    setPlayerDiagnosis(prev => prev === disease ? null : disease);
   };
 
   const herbsTotal = selectedHerbs.reduce((sum, id) => {
@@ -79,42 +89,33 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
 
   const handleSubmit = () => {
     if (!canSubmit || !targetBed) return;
-    assignBedAndTreat(beast.id, targetBed.id, selectedStaff, selectedHerbs);
+    assignBedAndTreat(beast.id, targetBed.id, selectedStaff, selectedHerbs, playerDiagnosis);
     onClose();
   };
 
-  // 匹配到的诊断（给玩家看的诊断指南）
-  const diseaseGuesses = guesses.map(g => ({
-    ...g,
-    presc: PRESCRIPTIONS.find(p => p.disease === g.disease),
-  }));
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex justify-end animate-fade">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+
       <div
-        className="bg-clinic-card rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col border-2 border-clinic-border/60 animate-slide-in"
-        onClick={e => e.stopPropagation()}
+        className="relative w-full max-w-lg bg-clinic-card shadow-2xl h-full flex flex-col border-l-2 border-clinic-border/60 animate-slide-in-right"
       >
-        <div className="flex items-start gap-3 p-4 border-b border-clinic-border/40 bg-gradient-to-r from-clinic-jade/10 via-transparent to-clinic-amber/10">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-white to-gray-50 shadow-inner border border-clinic-border/50 flex items-center justify-center text-4xl flex-shrink-0">
+        <div className="flex items-start gap-3 p-4 border-b border-clinic-border/40 bg-gradient-to-r from-clinic-jade/10 via-white to-clinic-amber/10 flex-shrink-0">
+          <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-white to-gray-50 shadow-inner border border-clinic-border/50 flex items-center justify-center text-3xl flex-shrink-0">
             {breed.emoji}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-display text-xl text-clinic-deep">{beast.name}</h3>
-              <span className="text-xs text-gray-500">{breed.name}</span>
-              <span>{ELEMENT_EMOJI[breed.element]} {ELEMENT_NAMES[breed.element]}系</span>
-              <span className="text-[10px] text-gray-400">{"⭐".repeat(breed.rarity)}</span>
+              <h3 className="font-display text-lg text-clinic-deep">{beast.name}</h3>
+              <span className="text-[11px] text-gray-500">{breed.name}</span>
+              <span className="text-[11px]">{ELEMENT_EMOJI[breed.element]} {ELEMENT_NAMES[breed.element]}系</span>
             </div>
             <div className="mt-1 flex items-center gap-2 flex-wrap text-xs">
               <span className={`tag border ${SEVERITY_COLORS[beast.severity]}`}>
-                {SEVERITY_NAMES[beast.severity]}（{SEVERITY_ORDER.indexOf(beast.severity) + 1}/4）
-              </span>
-              <span className="tag bg-clinic-crisis/10 text-clinic-crisis border border-clinic-crisis/30">
-                💊 {DISEASE_NAMES[beast.disease]}
+                {SEVERITY_NAMES[beast.severity]}
               </span>
               <span className="text-gray-500">💝 {beast.satisfaction}</span>
-              <span className="text-gray-500">⏳ 已等{beast.waitHours}h</span>
+              <span className="text-gray-500">⏳ 等{beast.waitHours}h</span>
               {targetBed && (
                 <span className="tag bg-clinic-amber/20 text-clinic-deep border border-clinic-amber/40 ml-auto">
                   🛏️ {targetBed.name}
@@ -124,108 +125,135 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg text-gray-400 hover:text-clinic-crisis hover:bg-red-50 transition-colors"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-clinic-crisis hover:bg-red-50 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {!targetBed && (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
-              <AlertCircle className="w-5 h-5 flex-shrink-0" />
-              请先点击一张空闲的床位，再为这位灵兽安排诊断和治疗。
-            </div>
-          )}
+        {!targetBed && (
+          <div className="mx-4 mt-3 flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            请先点击一张空闲的床位，再为这位灵兽安排诊断和治疗。
+          </div>
+        )}
 
-          {/* 症状区 */}
-          <div className="card p-4 border-clinic-jade/20">
-            <div className="font-display text-base text-clinic-deep flex items-center gap-2 mb-2">
-              <Stethoscope className="w-5 h-5 text-clinic-jade" />
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {/* 症状 + 诊断推测 */}
+          <div className="card p-3 border-clinic-jade/20">
+            <div className="font-display text-sm text-clinic-deep flex items-center gap-1.5 mb-2">
+              <Stethoscope className="w-4 h-4 text-clinic-jade" />
               望闻问切 — 症状观察
             </div>
             <div className="flex flex-wrap gap-1.5 mb-3">
               {beast.symptoms.map(s => (
-                <span key={s} className="tag bg-white border border-clinic-jade/30 text-clinic-deep shadow-sm">
+                <span key={s} className="tag bg-white border border-clinic-jade/30 text-clinic-deep text-xs shadow-sm">
                   {s}
                 </span>
               ))}
             </div>
-            {showHint && diseaseGuesses.length > 0 && (
-              <div className="rounded-lg bg-clinic-jade/5 border border-clinic-jade/20 p-3 text-xs space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="font-semibold text-clinic-deep flex items-center gap-1">
-                    <Sparkles className="w-4 h-4 text-clinic-amber" />
-                    医案参考（根据症状推测可能病症）
-                  </div>
-                  <button
-                    onClick={() => setShowHint(false)}
-                    className="text-[10px] text-gray-400 hover:text-clinic-deep"
-                  >
-                    隐藏提示
-                  </button>
-                </div>
-                <div className="grid gap-1.5 md:grid-cols-3">
-                  {diseaseGuesses.map((g, i) => (
-                    <div
-                      key={g.disease}
-                      className="p-2 rounded-md bg-white/70 border border-clinic-border/40 flex flex-col"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{DISEASE_NAMES[g.disease]}</span>
-                        <span className="text-[10px] text-gray-500">{Math.round(g.match * 100)}%</span>
-                      </div>
-                      <div className="mt-1 h-1 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full ${
-                            i === 0 ? "bg-clinic-jade" : i === 1 ? "bg-clinic-amber" : "bg-gray-400"
-                          }`}
-                          style={{ width: `${g.match * 100}%` }}
-                        />
-                      </div>
-                      {g.presc && (
-                        <button
-                          onClick={() => usePrescription(g.presc!)}
-                          disabled={!g.presc.herbIds.every(id => (inventory[id] ?? 0) >= 1) || !targetBed}
-                          className="mt-2 text-[10px] py-1 rounded bg-clinic-jade/10 text-clinic-jade hover:bg-clinic-jade hover:text-white disabled:opacity-40 disabled:hover:bg-clinic-jade/10 disabled:hover:text-clinic-jade transition-colors"
-                        >
-                          使用「{g.presc.name}」
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
+
+            <div className="border-t border-clinic-border/30 pt-3">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Brain className="w-4 h-4 text-clinic-amber" />
+                <span className="text-xs font-semibold text-clinic-deep">初步推测</span>
+                <span className="text-[10px] text-gray-400 ml-auto">点击选择你的诊断</span>
               </div>
-            )}
+              <div className="space-y-1.5">
+                {topSuspects.map(({ disease, matchRate }) => {
+                  const label = getMatchLabel(matchRate);
+                  const selected = playerDiagnosis === disease;
+                  const presc = PRESCRIPTIONS.find(p => p.disease === disease);
+                  return (
+                    <button
+                      key={disease}
+                      onClick={() => selectDiagnosis(disease)}
+                      disabled={!targetBed}
+                      className={`w-full text-left p-2 rounded-lg border transition-all disabled:opacity-50 ${
+                        selected
+                          ? "border-clinic-jade bg-clinic-jade/10 shadow-sm"
+                          : "border-gray-200 bg-white hover:border-clinic-jade/50 hover:bg-gray-50"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs px-1.5 py-0.5 rounded border ${label.color}`}>
+                          {label.text}
+                        </span>
+                        <span className="text-sm font-medium text-clinic-deep">{DISEASE_NAMES[disease]}</span>
+                        {selected && <Sparkles className="w-3.5 h-3.5 text-clinic-amber ml-auto" />}
+                        <span className="text-[10px] text-gray-400 ml-auto tabular-nums">匹配 {matchRate}%</span>
+                      </div>
+                      {selected && presc && (
+                        <div className="mt-2 pt-2 border-t border-clinic-border/30 flex items-center gap-2 text-[11px]">
+                          <span className="text-gray-500">推荐药方：</span>
+                          <span className="font-medium text-clinic-deep">{presc.name}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); applyPrescription(presc); }}
+                            className="ml-auto px-2 py-0.5 rounded bg-clinic-amber/20 text-clinic-deep text-[10px] font-medium hover:bg-clinic-amber/30 transition-colors"
+                          >
+                            一键填入
+                          </button>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => setShowAllDiseases(!showAllDiseases)}
+                className="w-full mt-2 text-[11px] text-gray-500 flex items-center justify-center gap-1 hover:text-clinic-deep transition-colors"
+              >
+                {showAllDiseases ? "收起" : "查看更多可能"}
+                <ChevronDown className={`w-3 h-3 transition-transform ${showAllDiseases ? "rotate-180" : ""}`} />
+              </button>
+            </div>
           </div>
 
-          {/* 药材选择区 */}
-          <div className="card p-4 border-clinic-amber/20">
-            <div className="font-display text-base text-clinic-deep flex items-center gap-2 mb-3">
-              <Pill className="w-5 h-5 text-clinic-amber" />
+          {/* 标准药方快速参考 */}
+          <div className="card p-3 border-clinic-amber/20">
+            <div className="font-display text-sm text-clinic-deep flex items-center gap-1.5 mb-2">
+              <Sparkles className="w-4 h-4 text-clinic-amber" />
+              药方典籍
+              <span className="ml-auto text-[10px] text-gray-400">共 {PRESCRIPTIONS.length} 方</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 max-h-28 overflow-y-auto">
+              {PRESCRIPTIONS.map(p => {
+                const canUse = p.herbIds.every(id => (inventory[id] ?? 0) >= 1);
+                const isSelected = JSON.stringify([...selectedHerbs].sort()) === JSON.stringify([...p.herbIds].sort());
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => canUse && targetBed && applyPrescription(p)}
+                    disabled={!canUse || !targetBed}
+                    className={`text-left p-1.5 rounded-lg border text-[11px] transition-all ${
+                      isSelected
+                        ? "border-clinic-jade bg-clinic-jade/10"
+                        : canUse
+                        ? "border-gray-200 bg-white hover:border-clinic-amber/50 hover:bg-amber-50"
+                        : "border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed"
+                    }`}
+                  >
+                    <div className="font-medium text-clinic-deep">{p.name}</div>
+                    <div className="text-[10px] text-gray-500">
+                      {p.herbIds.map(id => HERBS.find(h => h.id === id)?.emoji).join(" ")}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 药材选择 */}
+          <div className="card p-3 border-clinic-amber/20">
+            <div className="font-display text-sm text-clinic-deep flex items-center gap-1.5 mb-2">
+              <Pill className="w-4 h-4 text-clinic-amber" />
               处方笺 — 选择药材
-              <span className="ml-auto text-xs text-gray-500">
-                最多 3 味 · 已选 <span className="text-clinic-deep font-semibold">{selectedHerbs.length}</span>
+              <span className="ml-auto text-[11px] text-gray-500">
+                已选 <span className="text-clinic-deep font-semibold">{selectedHerbs.length}</span>/3
               </span>
             </div>
 
-            <div className="mb-3 text-xs flex flex-wrap gap-1">
-              {PRESCRIPTIONS.map(p => (
-                <button
-                  key={p.id}
-                  onClick={() => usePrescription(p)}
-                  disabled={!p.herbIds.every(id => (inventory[id] ?? 0) >= 1) || !targetBed}
-                  className="px-2 py-1 rounded-md border border-clinic-border/50 bg-white hover:border-clinic-jade hover:bg-clinic-jade/5 text-gray-700 hover:text-clinic-deep disabled:opacity-40 disabled:hover:border-clinic-border/50 disabled:hover:bg-white transition-colors flex items-center gap-1"
-                  title={`${DISEASE_NAMES[p.disease]} 专用方，成功率 ${p.successRate}%`}
-                >
-                  <span className="text-clinic-amber">📜</span>
-                  <span>{p.name}</span>
-                  <span className="text-[9px] text-gray-400">({p.successRate}%)</span>
-                </button>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <div className="grid grid-cols-5 gap-1.5">
               {HERBS.map(h => {
                 const count = inventory[h.id] ?? 0;
                 const selected = selectedHerbs.includes(h.id);
@@ -235,25 +263,22 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
                     key={h.id}
                     onClick={() => toggleHerb(h.id)}
                     disabled={disabled}
-                    className={`relative p-2 rounded-xl border-2 text-left transition-all ${
+                    className={`relative p-1.5 rounded-lg border text-center transition-all ${
                       selected
-                        ? "border-clinic-jade bg-clinic-jade/10 shadow-glow"
+                        ? "border-clinic-jade bg-clinic-jade/10 shadow-sm"
                         : count > 0
-                        ? "border-clinic-border/50 bg-white hover:border-clinic-jade/50 hover:shadow-md"
+                        ? "border-clinic-border/50 bg-white hover:border-clinic-jade/50"
                         : "border-gray-200 bg-gray-50 opacity-50"
                     } ${disabled && !selected ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
                   >
-                    <div className="text-2xl mb-1">{h.emoji}</div>
-                    <div className="text-xs font-semibold text-clinic-deep">{h.name}</div>
-                    <div className="text-[10px] text-gray-500 flex items-center justify-between">
-                      <span>{ELEMENT_EMOJI[h.element]}</span>
-                      <span>💰{h.price}</span>
-                    </div>
-                    <div className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-black/5 text-gray-600 tabular-nums">
-                      x{count}
+                    <div className="text-xl">{h.emoji}</div>
+                    <div className="text-[10px] font-medium text-clinic-deep truncate">{h.name}</div>
+                    <div className="text-[9px] text-gray-400">💰{h.price}</div>
+                    <div className="absolute top-0.5 right-0.5 text-[9px] px-1 rounded-full bg-black/5 text-gray-500 tabular-nums">
+                      {count}
                     </div>
                     {selected && (
-                      <div className="absolute -top-1.5 -left-1.5 w-5 h-5 bg-clinic-jade text-white text-xs rounded-full flex items-center justify-center shadow-md">
+                      <div className="absolute -top-1 -left-1 w-4 h-4 bg-clinic-jade text-white text-[10px] rounded-full flex items-center justify-center shadow-sm">
                         {selectedHerbs.indexOf(h.id) + 1}
                       </div>
                     )}
@@ -264,18 +289,18 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
           </div>
 
           {/* 护理员 */}
-          <div className="card p-4 border-clinic-light-jade/20">
-            <div className="font-display text-base text-clinic-deep flex items-center gap-2 mb-3">
-              <Users className="w-5 h-5 text-clinic-light-jade" />
+          <div className="card p-3 border-clinic-light-jade/20">
+            <div className="font-display text-sm text-clinic-deep flex items-center gap-1.5 mb-2">
+              <Users className="w-4 h-4 text-clinic-light-jade" />
               护理员安排
-              <span className="ml-auto text-[11px] text-gray-500">
-                💡 分配护理员可加速治疗 30%，成功率 +5~10%
+              <span className="ml-auto text-[10px] text-gray-500">
+                加速 30% · 成功率 +5~10%
               </span>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-1.5">
               {idleStaff.length === 0 && (
-                <div className="col-span-full text-center py-3 text-gray-400 text-sm italic">
-                  暂时没有空闲的护理员，您可以不分配直接开始治疗
+                <div className="col-span-full text-center py-2 text-gray-400 text-xs italic">
+                  暂无空闲护理员，可直接开始治疗
                 </div>
               )}
               {idleStaff.map(s => {
@@ -285,22 +310,21 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
                     key={s.id}
                     onClick={() => setSelectedStaff(sel ? null : s.id)}
                     disabled={!targetBed}
-                    className={`p-2.5 rounded-xl border-2 text-left transition-all disabled:opacity-50 ${
+                    className={`p-2 rounded-lg border text-left transition-all disabled:opacity-50 ${
                       sel
-                        ? "border-clinic-light-jade bg-clinic-light-jade/10 shadow-glow"
-                        : "border-clinic-border/50 bg-white hover:border-clinic-light-jade/60 hover:shadow-md"
+                        ? "border-clinic-light-jade bg-clinic-light-jade/10 shadow-sm"
+                        : "border-clinic-border/50 bg-white hover:border-clinic-light-jade/60"
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl">{s.emoji}</span>
-                      <div>
-                        <div className="text-sm font-semibold text-clinic-deep">{s.name}</div>
-                        <div className="text-[10px] text-gray-500">{s.title} · Lv.{s.skillLevel}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xl">{s.emoji}</span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-clinic-deep truncate">{s.name}</div>
+                        <div className="text-[9px] text-gray-500">Lv.{s.skillLevel}</div>
                       </div>
                     </div>
-                    <div className="mt-1.5 text-[10px] flex items-center justify-between text-gray-500">
-                      <span>成功率 +{s.skillLevel * 5}%</span>
-                      <span>💰 日薪 {s.dailyWage}</span>
+                    <div className="mt-1 text-[9px] text-gray-500">
+                      成功率 +{s.skillLevel * 5}% · 日薪 {s.dailyWage}
                     </div>
                   </button>
                 );
@@ -308,53 +332,53 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
               <button
                 onClick={() => setSelectedStaff(null)}
                 disabled={!targetBed}
-                className={`p-2.5 rounded-xl border-2 border-dashed transition-all disabled:opacity-50 ${
+                className={`p-2 rounded-lg border border-dashed transition-all disabled:opacity-50 ${
                   selectedStaff === null
                     ? "border-gray-400 bg-gray-50"
                     : "border-clinic-border/50 bg-white hover:border-gray-400"
-                } flex flex-col items-center justify-center text-xs text-gray-500 hover:text-clinic-deep`}
+                } flex flex-col items-center justify-center text-[10px] text-gray-500 hover:text-clinic-deep`}
               >
-                <span className="text-xl mb-1">🙅</span>
-                不分配护理员
+                <span className="text-lg mb-0.5">🙅</span>
+                不分配
               </button>
             </div>
           </div>
         </div>
 
-        <div className="p-4 border-t border-clinic-border/40 bg-gradient-to-r from-clinic-amber/10 via-white to-clinic-jade/10 flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-3 text-sm">
+        {/* 底部操作栏 */}
+        <div className="p-3 border-t border-clinic-border/40 bg-gradient-to-r from-clinic-amber/10 via-white to-clinic-jade/10 flex-shrink-0">
+          <div className="flex items-center gap-2 text-xs mb-2 flex-wrap">
             <div className="flex items-center gap-1">
-              <Pill className="w-4 h-4 text-clinic-amber" />
-              <span>
+              <Pill className="w-3.5 h-3.5 text-clinic-amber" />
+              <span className="text-gray-600">
                 {selectedHerbs.length > 0
-                  ? selectedHerbs.map(id => HERBS.find(h => h.id === id)?.emoji || "?").join(" + ")
+                  ? selectedHerbs.map(id => HERBS.find(h => h.id === id)?.emoji || "?").join("+")
                   : "未选药"}
               </span>
             </div>
-            <span className="text-gray-400">·</span>
-            <div className="text-clinic-deep font-semibold tabular-nums">
-              💊 药材成本：{herbsTotal} 金
-            </div>
+            <span className="text-clinic-deep font-semibold tabular-nums ml-auto">
+              💊 {herbsTotal} 金
+            </span>
             {selectedStaff && (
               <>
-                <span className="text-gray-400">·</span>
-                <div className="text-clinic-deep">
-                  👩‍⚕️ 护理：{staff.find(s => s.id === selectedStaff)?.name}
+                <span className="text-gray-300">·</span>
+                <div className="text-gray-600 text-[11px]">
+                  👩‍⚕️ {staff.find(s => s.id === selectedStaff)?.name}
                 </div>
               </>
             )}
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <button
               onClick={onClose}
-              className="px-4 py-2 rounded-lg border-2 border-clinic-border/60 text-gray-600 hover:bg-white/80 transition-colors"
+              className="flex-1 py-2 rounded-lg border-2 border-clinic-border/60 text-gray-600 hover:bg-white/80 transition-colors text-sm"
             >
               取消
             </button>
             <button
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className="btn-primary flex items-center gap-2 disabled:!bg-gray-300"
+              className="btn-primary flex-1 flex items-center justify-center gap-1.5 disabled:!bg-gray-300 text-sm"
             >
               开始治疗
               <ArrowRight className="w-4 h-4" />

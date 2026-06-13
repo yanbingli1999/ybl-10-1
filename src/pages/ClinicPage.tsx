@@ -21,6 +21,9 @@ export default function ClinicPage() {
     // If a beast is selected, open modal directly with this bed
     if (selectedBeastId) {
       setModalOpen(true);
+    } else {
+      // No beast selected yet, remind user
+      useGameStore.getState().addNotification("info", "请先在左侧候诊队列中选择一位灵兽");
     }
   };
 
@@ -60,7 +63,7 @@ export default function ClinicPage() {
       </div>
 
       <TreatmentModal
-        open={modalOpen || !!selectedBeastId}
+        open={modalOpen && !!targetBed}
         onClose={() => {
           setModalOpen(false);
           useGameStore.getState().selectBeast(null);

@@ -31,6 +31,7 @@ export default {
       animation: {
         "pulse-danger": "pulse-danger 1.5s ease-in-out infinite",
         "slide-in": "slide-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)",
+        "slide-in-right": "slide-in-right 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)",
         "heal-glow": "heal-glow 0.8s ease-out",
         shake: "shake 0.5s ease-in-out",
         "float-up": "float-up 1s ease-out forwards",
@@ -43,6 +44,10 @@ export default {
         },
         "slide-in": {
           "0%": { transform: "translateX(30px)", opacity: "0" },
+          "100%": { transform: "translateX(0)", opacity: "1" },
+        },
+        "slide-in-right": {
+          "0%": { transform: "translateX(100%)", opacity: "0" },
           "100%": { transform: "translateX(0)", opacity: "1" },
         },
         "heal-glow": {

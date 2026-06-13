@@ -1,4 +1,4 @@
-import { BedDouble, UserPlus, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
+import { BedDouble, UserPlus, CheckCircle2, XCircle, Clock, Loader2, Search } from "lucide-react";
 import { useGameStore } from "@/store/gameStore";
 import { BREEDS, SEVERITY_NAMES, SEVERITY_BORDER, DISEASE_NAMES, HERBS } from "@/data/gameData";
 import type { Bed } from "@/types/game";
@@ -32,7 +32,10 @@ export function BedGrid({ onBedClick }: BedGridProps) {
           const breed = snapshot ? BREEDS.find(b => b.id === snapshot.breedId) : null;
           const assignedStaff = bed.assignedStaffId ? staff.find(s => s.id === bed.assignedStaffId) : null;
           const progress = bed.treatmentTotal > 0 ? (bed.treatmentProgress / bed.treatmentTotal) * 100 : 0;
-          const herbsUsed = bed.currentPrescriptionHerbs.map(id => HERBS.find(h => h.id === id)?.emoji + HERBS.find(h => h.id === id)?.name).filter(Boolean);
+          const herbsUsed = bed.currentPrescriptionHerbs.map(id => {
+            const h = HERBS.find(x => x.id === id);
+            return h ? h.emoji + h.name : "";
+          }).filter(Boolean);
 
           const resolved = bed.result !== "pending";
           const isSuccess = bed.result === "success";
@@ -100,7 +103,7 @@ export function BedGrid({ onBedClick }: BedGridProps) {
                         {snapshot.name}
                         <span className="ml-1 text-xs text-gray-500">{breed.name}</span>
                       </div>
-                      <div className="text-[11px] flex items-center gap-1">
+                      <div className="text-[11px] flex items-center gap-1 flex-wrap">
                         <span className={`tag border ${
                           snapshot.severity === "mild" ? "bg-clinic-jade/10 text-clinic-jade border-clinic-jade/30" :
                           snapshot.severity === "moderate" ? "bg-amber-100/60 text-amber-700 border-amber-300" :
@@ -109,7 +112,19 @@ export function BedGrid({ onBedClick }: BedGridProps) {
                         }`}>
                           {SEVERITY_NAMES[snapshot.severity]}
                         </span>
-                        <span className="text-clinic-crisis">{DISEASE_NAMES[snapshot.disease]}</span>
+                        {resolved ? (
+                          <span className="text-clinic-crisis flex items-center gap-0.5">
+                            <CheckCircle2 className="w-3 h-3" />
+                            确诊 {DISEASE_NAMES[snapshot.disease]}
+                          </span>
+                        ) : bed.playerDiagnosis ? (
+                          <span className="text-gray-600 flex items-center gap-0.5">
+                            <Search className="w-3 h-3" />
+                            拟诊 {DISEASE_NAMES[bed.playerDiagnosis]}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 italic">观察中...</span>
+                        )}
                       </div>
                       <div className="text-[10px] text-gray-500 truncate">
                         💊 {herbsUsed.join(" ")}

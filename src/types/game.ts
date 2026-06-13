@@ -88,6 +88,7 @@ export interface Bed {
   treatmentTotal: number;
   result: TreatmentResult;
   currentPrescriptionHerbs: string[];
+  playerDiagnosis: DiseaseType | null;
   startedAt: number | null;
   beastSnapshot: {
     id: string;

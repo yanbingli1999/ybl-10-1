@@ -88,6 +88,17 @@ function calcTreatmentHours(severity: Severity, staffBoost: boolean): number {
   return staffBoost ? Math.ceil(base * 0.7) : base;
 }
 
+export function guessDiseaseFromSymptoms(symptoms: string[]): { disease: DiseaseType; matchRate: number }[] {
+  const results: { disease: DiseaseType; matchRate: number }[] = [];
+  for (const disease of DISEASE_TYPES) {
+    const diseaseSyms = DISEASE_SYMPTOMS[disease];
+    const matched = symptoms.filter(s => diseaseSyms.includes(s)).length;
+    const matchRate = Math.floor((matched / symptoms.length) * 100);
+    results.push({ disease, matchRate });
+  }
+  return results.sort((a, b) => b.matchRate - a.matchRate);
+}
+
 export interface GameState {
   money: number;
   reputation: number;
@@ -115,7 +126,7 @@ export interface GameState {
   selectBeast: (id: string | null) => void;
   selectBed: (id: string | null) => void;
   dismissBeast: (id: string) => void;
-  assignBedAndTreat: (beastId: string, bedId: string, staffId: string | null, herbIds: string[]) => void;
+  assignBedAndTreat: (beastId: string, bedId: string, staffId: string | null, herbIds: string[], playerDiagnosis: DiseaseType | null) => void;
   purchaseHerb: (herbId: string, qty: number) => void;
   collectFromBed: (bedId: string) => void;
   addNotification: (type: Notification["type"], message: string) => void;
@@ -138,6 +149,7 @@ function createInitialBeds(): Bed[] {
     treatmentTotal: 0,
     result: "pending",
     currentPrescriptionHerbs: [],
+    playerDiagnosis: null,
     startedAt: null,
     beastSnapshot: null,
   }));
@@ -244,7 +256,7 @@ export const useGameStore = create<GameState>()(
         get().addNotification("success", `采购 ${herb.name} x${qty}，花费${totalCost}金`);
       },
 
-      assignBedAndTreat: (beastId, bedId, staffId, herbIds) => {
+      assignBedAndTreat: (beastId, bedId, staffId, herbIds, playerDiagnosis) => {
         const s = get();
         const beast = s.waitingQueue.find(b => b.id === beastId);
         const bed = s.beds.find(b => b.id === bedId);
@@ -288,6 +300,7 @@ export const useGameStore = create<GameState>()(
           treatmentTotal: totalHours,
           result: "pending" as const,
           currentPrescriptionHerbs: [...herbIds],
+          playerDiagnosis,
           startedAt: s.currentTime,
           beastSnapshot: {
             id: beast.id,
@@ -339,8 +352,13 @@ export const useGameStore = create<GameState>()(
           const satMult = beast.satisfaction / 100;
           const reputationBonus = s.reputation / 100;
           const revenue = Math.floor(breed.baseFees * severityMult * (0.8 + 0.4 * satMult) * (1 + reputationBonus * 0.3));
-          const repGain = Math.ceil(3 * severityMult * satMult);
+          let repGain = Math.ceil(3 * severityMult * satMult);
           const trustGain = Math.ceil(10 * severityMult * satMult);
+
+          const diagnosisCorrect = bed.playerDiagnosis === beast.disease;
+          if (diagnosisCorrect) {
+            repGain += 2;
+          }
 
           let evolved = false;
           let newStage = 0;
@@ -392,7 +410,8 @@ export const useGameStore = create<GameState>()(
           }));
           get()._addTransaction("income", "诊金收入", revenue, `治愈 ${breed.name}·${beast.name}${evolved ? "(进化加成)" : ""}`);
           const evolveMsg = evolved ? " 🎉灵兽发生进化！额外获得加成！" : "";
-          get().addNotification("success", `治愈成功！获得 ${revenue} 金，声望+${repGain}，亲密度+${trustGain}${evolveMsg}`);
+          const diagMsg = diagnosisCorrect ? " 🔍诊断正确！" : "";
+          get().addNotification("success", `治愈成功！获得 ${revenue} 金，声望+${repGain}，亲密度+${trustGain}${diagMsg}${evolveMsg}`);
         } else if (bed.result === "fail" && beast) {
           const penaltyMoney = Math.floor(s.money * 0.05) + 20;
           const penaltyRep = 5;
@@ -421,7 +440,8 @@ export const useGameStore = create<GameState>()(
             medicalRecords: [record, ...st.medicalRecords],
           }));
           get()._addTransaction("expense", "误诊赔偿", penaltyMoney, `${breedName}·${beast.name} 治疗失败赔偿`);
-          get().addNotification("error", `治疗失败！赔偿 ${penaltyMoney} 金，声望-${penaltyRep}`);
+          const realDiseaseName = DISEASE_NAMES[beast.disease];
+          get().addNotification("error", `治疗失败！确诊为「${realDiseaseName}」。赔偿 ${penaltyMoney} 金，声望-${penaltyRep}`);
         }
 
         // Release staff & bed
@@ -434,6 +454,7 @@ export const useGameStore = create<GameState>()(
           treatmentTotal: 0,
           result: "pending" as const,
           currentPrescriptionHerbs: [],
+          playerDiagnosis: null,
           startedAt: null,
           beastSnapshot: null,
         } : b);
@@ -458,7 +479,13 @@ export const useGameStore = create<GameState>()(
         else if (newWeather === "stormy") { bonusMoney = -30; eventMsg = "雷暴天气，采购运输受阻。"; }
         else if (newWeather === "sunny") { bonusMoney = 10; eventMsg = "晴朗天气，心情舒畅。"; }
 
-        const newRelStaff = s.staff.map(st => ({ ...st, status: "idle" as const, assignedBedId: null }));
+        const newRelStaff = s.staff.map(st => {
+          const isAssignedToActiveBed = s.beds.some(b =>
+            b.status === "occupied" && b.result === "pending" && b.assignedStaffId === st.id
+          );
+          if (isAssignedToActiveBed) return st;
+          return { ...st, status: "idle" as const, assignedBedId: null };
+        });
 
         set(st => ({
           currentDay: day + 1,
